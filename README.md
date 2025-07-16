@@ -1,3 +1,4 @@
 # Atomistic-Modeling-for-Structural-Mechanics
 
 <img width="1600" height="1200" alt="ok" src="https://github.com/user-attachments/assets/e0727dcf-8f95-4366-98a6-6b383d6d168d" />
+<a href="https://creativecommons.org">Atomistic Modeling for Structural Mechanics</a> © 2025 by <a href="https://creativecommons.org">Akshansh Mishra</a> is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;">
