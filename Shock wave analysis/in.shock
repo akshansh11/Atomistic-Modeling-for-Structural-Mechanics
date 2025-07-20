@@ -1,0 +1,116 @@
+# CREATED BY Akshansh Mishra on 20/07/2025 at 10.53 am Central European Summer Time
+
+# This work is licensed under Creative Commons Attribution 4.0 International 
+
+# Shockwave analysis in aluminum bar
+# High-velocity impact simulation
+
+# Basic settings
+units           metal
+dimension       3
+boundary        p p s
+atom_style      atomic
+atom_modify     map array
+
+# Variables for geometry and impact
+variable        lx equal 50.0      # Length in x (Angstroms)
+variable        ly equal 50.0      # Length in y
+variable        lz equal 200.0     # Length in z (shock direction)
+variable        lattice_param equal 4.05    # Al lattice parameter
+variable        impact_vel equal 2000.0     # Impact velocity (m/s)
+variable        temp_init equal 300.0       # Initial temperature (K)
+
+# Create simulation box
+lattice         fcc ${lattice_param}
+region          box block 0 ${lx} 0 ${ly} 0 ${lz} units box
+create_box      1 box
+create_atoms    1 box
+
+# Set mass for aluminum
+mass            1 26.9815
+
+# Define potential
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Define regions for impact and fixed boundary
+variable        impact_zone equal ${lz}*0.95    # Top 5% as impactor
+variable        fixed_zone equal ${lz}*0.05     # Bottom 5% fixed
+
+region          impactor block INF INF INF INF ${impact_zone} INF units box
+region          fixed_bottom block INF INF INF INF 0 ${fixed_zone} units box
+region          target block INF INF INF INF ${fixed_zone} ${impact_zone} units box
+
+# Group atoms
+group           impact_atoms region impactor
+group           fixed_atoms region fixed_bottom
+group           target_atoms region target
+group           mobile_atoms subtract all fixed_atoms
+
+# Initial conditions
+velocity        all create ${temp_init} 12345 mom yes rot no
+velocity        impact_atoms set 0.0 0.0 -${impact_vel} units box
+
+# Neighbor settings
+neighbor        0.3 bin
+neigh_modify    delay 0 every 1 check yes
+
+# Thermostat for initial equilibration
+fix             temp_control mobile_atoms nvt temp ${temp_init} ${temp_init} 0.1
+
+# Fix bottom boundary
+fix             fix_bottom fixed_atoms setforce 0.0 0.0 0.0
+
+# Computes for analysis
+compute         temp_all all temp
+compute         press_all all pressure temp_all
+compute         ke_atom all ke/atom
+compute         pe_atom all pe/atom
+compute         stress_atom all stress/atom NULL
+
+# Per-atom calculations for shock analysis
+compute         centro all centro/atom fcc
+compute         coord all coord/atom cutoff 3.5
+
+# Variables for shock properties
+variable        shock_pos atom "z"
+variable        velocity_z atom "vz"
+variable        density_local atom "mass*c_coord"
+
+# Output settings
+thermo_style    custom step time temp press ke pe etotal vol
+thermo          100
+timestep        0.001  # 1 fs
+
+# Dump for visualization
+dump            shock_dump all custom 50 shockwave.dump &
+                id type x y z vx vy vz &
+                c_ke_atom c_pe_atom c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] &
+                c_centro c_coord v_velocity_z
+
+dump_modify     shock_dump sort id
+
+# Additional dump for detailed analysis
+dump            analysis_dump all custom 100 shock_analysis.dump &
+                id type x y z vx vy vz &
+                c_ke_atom c_pe_atom &
+                c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] &
+                c_stress_atom[4] c_stress_atom[5] c_stress_atom[6] &
+                c_centro c_coord
+
+dump_modify     analysis_dump sort id
+
+# Brief equilibration
+run             500
+
+# Remove thermostat and start impact
+unfix           temp_control
+fix             nve_integration mobile_atoms nve
+
+# Run impact simulation
+run             5000
+
+# Continue for shock propagation analysis
+run             10000
+
+write_restart   shockwave_final.restart
