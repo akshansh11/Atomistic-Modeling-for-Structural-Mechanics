@@ -17,7 +17,7 @@ variable        lx equal 50.0      # Length in x (Angstroms)
 variable        ly equal 50.0      # Length in y
 variable        lz equal 200.0     # Length in z (shock direction)
 variable        lattice_param equal 4.05    # Al lattice parameter
-variable        impact_vel equal 2000.0     # Impact velocity (m/s)
+variable        impact_vel equal 20.0       # Impact velocity (Å/ps) = 2000 m/s
 variable        temp_init equal 300.0       # Initial temperature (K)
 
 # Create simulation box
@@ -47,19 +47,21 @@ group           fixed_atoms region fixed_bottom
 group           target_atoms region target
 group           mobile_atoms subtract all fixed_atoms
 
-# Initial conditions
+# Initial conditions - FIXED VELOCITY SETUP
 velocity        all create ${temp_init} 12345 mom yes rot no
-velocity        impact_atoms set 0.0 0.0 -${impact_vel} units box
+velocity        all set 0.0 0.0 0.0  # Zero all velocities first
+velocity        impact_atoms set 0.0 0.0 -${impact_vel}  # Downward impact
 
 # Neighbor settings
 neighbor        0.3 bin
 neigh_modify    delay 0 every 1 check yes
 
-# Thermostat for initial equilibration
-fix             temp_control mobile_atoms nvt temp ${temp_init} ${temp_init} 0.1
-
-# Fix bottom boundary
+# Fix bottom boundary BEFORE impact
 fix             fix_bottom fixed_atoms setforce 0.0 0.0 0.0
+velocity        fixed_atoms set 0.0 0.0 0.0  # Ensure fixed atoms don't move
+
+# NO initial thermostat - direct impact
+fix             nve_integration mobile_atoms nve
 
 # Computes for analysis
 compute         temp_all all temp
@@ -73,44 +75,27 @@ compute         centro all centro/atom fcc
 compute         coord all coord/atom cutoff 3.5
 
 # Variables for shock properties
-variable        shock_pos atom "z"
 variable        velocity_z atom "vz"
-variable        density_local atom "mass*c_coord"
 
 # Output settings
 thermo_style    custom step time temp press ke pe etotal vol
-thermo          100
-timestep        0.001  # 1 fs
+thermo          10
+timestep        0.0001  # Much smaller timestep: 0.1 fs
 
-# Dump for visualization
-dump            shock_dump all custom 50 shockwave.dump &
+# Dump for visualization - more frequent output
+dump            shock_dump all custom 10 shockwave.dump &
                 id type x y z vx vy vz &
-                c_ke_atom c_pe_atom c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] &
+                c_ke_atom c_pe_atom c_stress_atom[3] &
                 c_centro c_coord v_velocity_z
 
 dump_modify     shock_dump sort id
 
-# Additional dump for detailed analysis
-dump            analysis_dump all custom 100 shock_analysis.dump &
-                id type x y z vx vy vz &
-                c_ke_atom c_pe_atom &
-                c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] &
-                c_stress_atom[4] c_stress_atom[5] c_stress_atom[6] &
-                c_centro c_coord
+# Start impact simulation immediately
+run             10000   # 1 ps total
 
-dump_modify     analysis_dump sort id
-
-# Brief equilibration
-run             500
-
-# Remove thermostat and start impact
-unfix           temp_control
-fix             nve_integration mobile_atoms nve
-
-# Run impact simulation
-run             5000
-
-# Continue for shock propagation analysis
-run             10000
+# Continue for shock propagation analysis  
+run             20000   # Additional 2 ps
 
 write_restart   shockwave_final.restart
+
+print "Simulation completed - check for proper shock compression"
