@@ -1,1 +1,220 @@
+# CREATED BY Akshansh Mishra on 24/07/2025 at 2.10 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International 
+# Ongoing work (need to be fully validated)
+# Complete LAMMPS script for crack propagation in aluminum leading to fracture
+# Aluminum single crystal with pre-existing crack under tensile loading
 
+# ========== INITIALIZATION ==========
+clear
+units           metal
+dimension       3
+boundary        p s p    # periodic in x and z, shrink-wrapped in y
+atom_style      atomic
+atom_modify     map array
+
+# ========== GEOMETRY SETUP ==========
+# Create rectangular specimen with crack
+variable        Lx equal 200.0      # Length in x-direction (Angstroms)
+variable        Ly equal 100.0      # Width in y-direction
+variable        Lz equal 20.0       # Thickness in z-direction
+variable        crack_length equal 40.0  # Initial crack length
+
+# Set up lattice (FCC aluminum)
+lattice         fcc 4.05 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+
+# Create simulation box
+region          box block 0 ${Lx} 0 ${Ly} 0 ${Lz} units box
+create_box      1 box
+create_atoms    1 box
+
+# Set atomic mass for aluminum
+mass            1 26.9815386
+
+# ========== POTENTIAL DEFINITION ==========
+# EAM potential for aluminum
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Set neighbor list parameters
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# ========== INITIAL CRACK CREATION ==========
+# Create initial edge crack from left side
+variable        crack_y_center equal ${Ly}/2.0
+variable        crack_y_width equal 2.0
+
+# Delete atoms to create crack
+region          initial_crack block 0 ${crack_length} &
+                $(v_crack_y_center-v_crack_y_width/2) &
+                $(v_crack_y_center+v_crack_y_width/2) &
+                INF INF units box
+delete_atoms    region initial_crack
+
+# ========== GROUP DEFINITIONS ==========
+# Define regions for boundary conditions
+variable        edge_width equal 5.0
+
+# Bottom edge (fixed)
+region          bottom_edge block INF INF 0 ${edge_width} INF INF units box
+group           bottom region bottom_edge
+
+# Top edge (loaded)
+region          top_edge block INF INF $(v_Ly-v_edge_width) ${Ly} INF INF units box
+group           top region top_edge
+
+# Mobile atoms (everything else)
+group           mobile subtract all bottom top
+
+# ========== INITIAL RELAXATION ==========
+# Minimize initial configuration
+minimize        1.0e-6 1.0e-8 10000 100000
+
+# ========== LOADING SETUP ==========
+# Fix bottom edge
+fix             fix_bottom bottom setforce 0.0 0.0 0.0
+
+# Loading parameters
+variable        vel_load equal 0.0001  # Loading velocity in Angstrom/fs (very slow)
+
+# Apply constant velocity to top edge
+velocity        top set 0.0 ${vel_load} 0.0
+fix             load_top top setforce 0.0 NULL 0.0
+
+# ========== COMPUTES FOR ANALYSIS ==========
+# Coordination number to identify crack
+compute         coord all coord/atom cutoff 3.5
+
+# Stress calculations
+compute         stress_atom all stress/atom NULL
+compute         stress_global all reduce ave c_stress_atom[1] c_stress_atom[2] c_stress_atom[3]
+
+# Potential energy per atom
+compute         pe_atom all pe/atom
+
+# Center of mass positions for strain calculation
+compute         com_top top com
+compute         com_bottom bottom com
+
+# Calculate current strain using center of mass positions
+variable        top_y equal c_com_top[2]
+variable        bottom_y equal c_com_bottom[2]
+variable        current_length equal v_top_y-v_bottom_y
+variable        current_strain equal (v_current_length-${Ly})/${Ly}
+
+# ========== OUTPUT SETUP ==========
+# Thermodynamic output
+thermo_style    custom step time temp pe ke press v_current_strain v_top_y v_bottom_y &
+                c_stress_global[1] c_stress_global[2] c_stress_global[3]
+thermo          1000
+
+# Dump configuration for visualization
+dump            config all custom 2000 crack_evolution.dump &
+                id type x y z c_coord c_pe_atom c_stress_atom[1] c_stress_atom[2]
+dump_modify     config sort id
+
+# Dump only crack region for detailed analysis
+region          crack_zone block 0 $(v_crack_length+50) &
+                $(v_crack_y_center-20) $(v_crack_y_center+20) &
+                INF INF units box
+group           crack_atoms region crack_zone
+dump            crack_detail crack_atoms custom 500 crack_detail.dump &
+                id type x y z c_coord c_pe_atom
+
+# ========== TIME INTEGRATION ==========
+# Use NVE ensemble for quasi-static loading
+timestep        0.001  # 1 fs
+fix             integrate mobile nve
+
+# Optional: Add small damping to remove phonons for quasi-static conditions
+fix             damp mobile viscous 0.01
+
+# ========== SIMULATION EXECUTION ==========
+# Initial equilibration
+velocity        mobile create 1.0 482748 dist gaussian
+run             10000
+
+# Reset mobile atom velocities for quasi-static loading
+velocity        mobile set 0.0 0.0 0.0
+
+# Main loading simulation
+print           "Starting crack propagation simulation..."
+print           "Initial crack length: ${crack_length} Angstroms"
+print           "Loading velocity: ${vel_load} Angstrom/fs"
+
+# Run simulation with periodic checks
+label           main_loop
+
+# Run for a period
+run             5000
+
+# Check stress state
+variable        current_stress equal c_stress_global[2]
+variable        max_stress equal 5.0  # Maximum tensile stress before stopping (GPa)
+variable        min_stress equal -8.0  # Minimum stress (compressive becomes very negative)
+
+print           "Current strain: ${current_strain}"
+print           "Current stress: ${current_stress} GPa"
+
+# Check for fracture conditions
+if              "${current_stress} < ${min_stress}" then &
+                "print 'Fracture detected - stress dropped below ${min_stress} GPa'" &
+                "jump SELF fracture_detected"
+
+if              "${current_strain} > 0.2" then &
+                "print 'Maximum strain reached'" &
+                "jump SELF max_strain_reached"
+
+# Continue loading
+jump            SELF main_loop
+
+label           fracture_detected
+print           "Complete fracture detected!"
+print           "Final strain at fracture: ${current_strain}"
+print           "Final stress: ${current_stress} GPa"
+
+# Run a bit more to see complete separation
+unfix           load_top
+velocity        top set 0.0 0.0 0.0
+run             10000
+jump            SELF simulation_end
+
+label           max_strain_reached
+print           "Maximum strain limit reached without complete fracture"
+print           "Final strain: ${current_strain}"
+print           "Final stress: ${current_stress} GPa"
+
+label           simulation_end
+
+# ========== FINAL ANALYSIS ==========
+# Write final configuration
+write_data      final_fractured.data
+
+# Calculate final properties
+variable        final_pe equal pe
+variable        final_strain equal v_current_strain
+variable        final_stress equal v_current_stress
+
+print           "========== SIMULATION SUMMARY =========="
+print           "Final strain: ${final_strain}"
+print           "Final stress: ${final_stress} GPa"
+print           "Final potential energy: ${final_pe} eV"
+
+# Count atoms with broken bonds (coordination < 8 for FCC)
+variable        coord_threshold equal 8
+compute         broken_check all reduce sum "c_coord < v_coord_threshold"
+variable        num_broken equal c_broken_check
+
+print           "Number of atoms with coordination < ${coord_threshold}: ${num_broken}"
+
+# Optional: Create restart file for continuation
+write_restart   crack_propagation.restart
+
+print           "========== OUTPUT FILES =========="
+print           "- crack_evolution.dump: Full system evolution"
+print           "- crack_detail.dump: Detailed crack region"
+print           "- final_fractured.data: Final configuration"
+print           "- crack_propagation.restart: Restart file"
+print           "- log.lammps: Complete simulation log"
+
+print           "Simulation completed successfully!"
