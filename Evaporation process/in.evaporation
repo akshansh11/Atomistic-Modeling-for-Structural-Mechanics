@@ -1,0 +1,56 @@
+# CREATED BY Akshansh Mishra on 24/07/2025 at 9.33 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+
+# Thermal Evaporation of Copper Slab with Per-Atom Stress Output
+
+units           metal
+atom_style      atomic
+boundary        p p f                # Periodic x/y, fixed/open z (vacuum above/below)
+
+# Simulation box and slab setup
+lattice         fcc 3.615
+region          box block 0 10 0 10 0 20        # Box: 10x10x20 unit cells
+create_box      1 box
+region          slab block 0 10 0 10 0 10       # Slab: 10x10x10 (lower half)
+create_atoms    1 region slab
+
+mass            1 63.546
+
+# Potential
+pair_style      eam
+pair_coeff      * * Cu_u3.eam
+
+# Velocity initialization
+velocity        all create 300 87287            # Start at 300 K
+
+# Compute per-atom stress (6 components: xx, yy, zz, xy, xz, yz)
+compute         peratom all stress/atom NULL
+
+# Dump: id, type, position, and xx, yy, zz stress
+dump            1 all custom 500 dump.cu id type x y z c_peratom[1] c_peratom[2] c_peratom[3]
+
+# Print thermo data, ignore lost atoms so simulation continues
+thermo          100
+thermo_style    custom step temp pe ke atoms
+thermo_modify   lost ignore
+
+# Energy minimization (relaxation)
+minimize        1.0e-4 1.0e-6 100 1000
+
+# Ramp temperature from 300K to 3000K (simulate heating/evaporation)
+fix             1 all nvt temp 300 3000 0.1
+run             50000
+unfix           1
+
+# Hold at high temperature (3000K)
+fix             2 all nvt temp 3000 3000 0.1
+run             50000
+unfix           2
+
+write_data      final.data
+
+# -- This ensures per-atom stress is available for write_dump --
+run 0
+
+# Dump final configuration with per-atom stress for visualization
+write_dump      all custom final_dump.cu id type x y z c_peratom[1] c_peratom[2] c_peratom[3]
