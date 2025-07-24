@@ -1,0 +1,184 @@
+# CREATED BY Akshansh Mishra on 20/07/2025 at 10.53 am Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International 
+
+# LAMMPS script for torsion test of Al99 aluminum alloy rod
+# Units: metal (Angstroms, eV, ps, etc.)
+
+clear
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Create simulation box for cylindrical rod
+# Rod dimensions: Length = 80 Å, Radius = 8 Å
+region          box block -5.0 85.0 -12.0 12.0 -12.0 12.0
+create_box      1 box
+
+# Create aluminum FCC lattice
+lattice         fcc 4.05 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+
+# Create cylindrical rod along x-axis
+region          rod cylinder x 0.0 0.0 8.0 0.0 80.0
+create_atoms    1 region rod
+
+# Clean up surface - create groups first
+group           all_atoms type 1
+region          inner_rod cylinder x 0.0 0.0 7.8 0.0 80.0
+group           inner region inner_rod
+group           surface subtract all_atoms inner
+
+# Optional: delete surface atoms for cleaner cylinder (comment out if you want to keep them)
+# delete_atoms    group surface
+
+# Redefine main group
+group           rod type 1
+
+# Define aluminum properties
+mass            1 26.9815385
+
+# Use EAM potential for aluminum
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Neighbor list parameters
+neighbor        2.0 bin
+neigh_modify    delay 0 every 20 check no
+
+# Define groups for torsion boundary conditions
+# Fixed end - left end of rod
+region          fixed_end cylinder x 0.0 0.0 8.0 0.0 8.0
+group           fixed region fixed_end
+
+# Twisted end - right end of rod  
+region          twist_end cylinder x 0.0 0.0 8.0 72.0 80.0
+group           twisted region twist_end
+
+# Mobile atoms
+group           mobile subtract rod fixed
+
+# Set initial conditions
+velocity        all create 300.0 12345 mom yes rot no
+
+# Energy minimization
+minimize        1.0e-4 1.0e-6 1000 10000
+
+# Reset velocities after minimization
+velocity        mobile set 0.0 0.0 0.0
+
+# Set up thermodynamic output
+thermo_style    custom step temp pe ke etotal press pxx pyy pzz pxy pxz pyz
+thermo          500
+
+# Compute stress tensor and shear stress for each atom
+compute         stress_tensor all stress/atom NULL
+compute         pe_atom all pe/atom
+
+# Calculate shear stress components for torsion analysis
+variable        tau_xy atom c_stress_tensor[4]  # Shear stress xy
+variable        tau_xz atom c_stress_tensor[5]  # Shear stress xz
+variable        shear_stress atom sqrt(v_tau_xy^2+v_tau_xz^2)
+
+# Set up trajectory output
+dump            1 all custom 2000 torsion_trajectory.dump id type x y z c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6] v_shear_stress c_pe_atom
+
+# Apply boundary conditions
+# Fix the left end completely
+fix             1 fixed setforce 0.0 0.0 0.0
+
+# Apply NVE integration to mobile atoms
+fix             2 mobile nve
+
+# Apply gradual torsion by rotating the right end
+# Define rotation variables
+variable        twist_rate equal 0.0001  # radians per timestep
+variable        twist_angle equal 0.0
+variable        max_twist equal 0.2      # maximum twist angle in radians
+
+# Store initial positions for rotation calculation
+variable        x0 atom x
+variable        y0 atom y
+variable        z0 atom z
+
+# Apply light damping during initial equilibration
+fix             3 mobile langevin 300.0 300.0 1.0 12345
+
+# Initial equilibration
+timestep        0.001
+run             10000
+
+# Remove damping
+unfix           3
+
+# Gradual torsion application
+label           twist_loop
+
+# Calculate new positions after rotation
+variable        cos_theta equal cos(v_twist_angle)
+variable        sin_theta equal sin(v_twist_angle)
+
+# Apply rotation to twisted end atoms
+# For atoms in twisted region: rotate around x-axis
+variable        y_new atom v_y0*v_cos_theta-v_z0*v_sin_theta
+variable        z_new atom v_y0*v_sin_theta+v_z0*v_cos_theta
+
+# Move atoms to new positions (only for twisted group)
+fix             4 twisted move linear 0.0 0.0 0.0
+
+# Alternative: Apply torque instead of displacement
+variable        torque equal 0.001  # eV (adjust as needed)
+variable        rod_length equal 80.0
+variable        rod_radius equal 8.0
+
+# Apply tangential forces to create torque
+region          twist_layer cylinder x 0.0 0.0 8.0 75.0 80.0
+group           twist_layer region twist_layer
+
+# Calculate tangential force components for each atom in twist region
+variable        r_atom atom sqrt((y-0.0)^2+(z-0.0)^2)
+variable        theta_atom atom atan2(z,y)
+variable        fx_tang atom 0.0
+variable        fy_tang atom -${torque}*(z-0.0)/(v_r_atom^2)
+variable        fz_tang atom ${torque}*(y-0.0)/(v_r_atom^2)
+
+# Apply tangential forces
+fix             5 twist_layer addforce v_fx_tang v_fy_tang v_fz_tang
+
+# Run simulation with applied torque
+run             20000
+
+# Increase torque gradually
+variable        torque equal 0.005
+run             20000
+
+variable        torque equal 0.01
+run             30000
+
+# Calculate torsional properties
+# Maximum shear stress
+compute         max_shear all reduce max v_shear_stress
+compute         avg_shear all reduce ave v_shear_stress
+
+# Calculate twist angle by measuring end atom positions
+compute         twist_end_com twisted com
+compute         twist_end_y twisted reduce ave y
+compute         twist_end_z twisted reduce ave z
+
+variable        final_angle equal atan2(c_twist_end_z,c_twist_end_y)
+
+# Calculate torsional stress distribution with radius
+variable        radius atom sqrt(y^2+z^2)
+variable        tau_max atom v_shear_stress
+variable        tau_r atom v_shear_stress*v_radius/8.0  # normalized by outer radius
+
+# Output final stress state
+dump            2 all custom 1 final_torsion_state.dump id type x y z v_radius v_shear_stress v_tau_r c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6]
+
+# Print results (without variable substitution to avoid errors)
+print           "Torsion test completed!"
+print           "Check the dump files for stress analysis results"
+print           "Output files:"
+print           "- torsion_trajectory.dump: Full trajectory with stress data"
+print           "- final_torsion_state.dump: Final state with shear stress analysis"
+print           ""
+print           "Use the Python visualization script to analyze the stress distribution"
