@@ -1,0 +1,126 @@
+# CREATED BY Akshansh Mishra on 25/07/2025 at 08.40 am Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+
+# LAMMPS script for FeNiCrCoAl HEA thermal test
+# Proper temperature rescaling implementation
+
+# ========================
+# INITIALIZATION
+# ========================
+clear
+units           metal
+atom_style      atomic
+dimension       3
+boundary        p p p
+processors      * * *
+
+# ========================
+# SIMULATION BOX
+# ========================
+lattice         fcc 3.8
+region          box block 0 20 0 20 0 20 units lattice
+create_box      5 box
+
+# ========================
+# ATOM CREATION
+# ========================
+create_atoms    1 region box
+
+# ========================
+# POTENTIAL DEFINITION
+# ========================
+mass            1 55.845    # Fe
+mass            2 58.693    # Ni
+mass            3 51.996    # Cr
+mass            4 58.933    # Co
+mass            5 26.982    # Al
+
+pair_style      eam/alloy
+pair_coeff      * * FeNiCrCoAl.eam.alloy Fe Ni Cr Co Al
+
+# ========================
+# NEIGHBOR SETTINGS
+# ========================
+neighbor        2.0 bin
+neigh_modify    every 1 delay 5 check yes
+
+# ========================
+# COMPOSITION SETUP
+# ========================
+set             atom * type 1
+variable        seed equal 12345
+set             type 1 type/fraction 2 0.2 ${seed}
+set             type 1 type/fraction 3 0.25 ${seed}
+set             type 1 type/fraction 4 0.33 ${seed}
+set             type 1 type/fraction 5 0.5 ${seed}
+
+delete_atoms    overlap 2.0 all all
+
+# ========================
+# COMPUTES FOR ANALYSIS
+# ========================
+compute         pe all pe/atom
+compute         msd all msd
+compute         temp all temp
+
+# ========================
+# MINIMIZATION
+# ========================
+reset_timestep  0
+min_style       cg
+min_modify      dmax 0.1
+minimize        1.0e-6 1.0e-8 10000 100000
+
+# ========================
+# THERMAL TEST PROTOCOL
+# ========================
+
+# Stage 1: Equilibration at 300K
+velocity        all create 300.0 ${seed}
+fix             nvt all nvt temp 300 300 0.1
+thermo_style    custom step temp vol density pe
+thermo          100
+run             5000
+unfix           nvt
+
+# Stage 2: Heating to 1000K (NVT ensemble)
+fix             nvt_heat all nvt temp 300 1000 0.1
+dump            thermal all custom 1000 thermal.dump id type x y z vx vy vz c_pe
+dump_modify     thermal element Fe Ni Cr Co Al
+run             10000
+unfix           nvt_heat
+
+# Stage 3: Hold at 1000K (NVE ensemble with temp rescaling)
+# Corrected fix temp/rescale syntax: fix ID group temp/rescale N Tstart Tstop window fraction
+fix             nve_hold all nve
+fix             temp_hold all temp/rescale 100 1000 1000 0.1 1.0
+run             5000
+unfix           temp_hold
+unfix           nve_hold
+
+# Stage 4: Cooling to 300K (NVT ensemble)
+fix             nvt_cool all nvt temp 1000 300 0.1
+run             10000
+unfix           nvt_cool
+
+# ========================
+# ANALYSIS OUTPUT
+# ========================
+variable        time equal dt*step
+fix             thermo_out all print 100 "${time} $(temp) $(vol)" file thermo_profile.txt
+
+# Final dump
+dump            final all custom 1000 final_config.dump id type x y z
+run             1000
+
+# ========================
+# FINAL OUTPUT
+# ========================
+write_data      final_thermal.data
+write_restart   thermal_restart.restart
+
+print "Thermal test completed successfully!"
+print "Output files:"
+print "1. thermal.dump - Trajectory for visualization"
+print "2. thermo_profile.txt - Temperature and volume evolution"
+print "3. final_config.dump - Final atomic configuration"
