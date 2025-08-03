@@ -1,0 +1,127 @@
+# CREATED BY Akshansh Mishra on 04/08/2025 at 12.41 am Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS script for uniaxial compression of aluminum cube
+# Compression to 50% with stress analysis
+
+# Initialize simulation
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+
+# Create aluminum FCC structure
+lattice fcc 4.05  # Aluminum lattice parameter in Angstroms
+region box block 0 10 0 10 0 10  # Create 10x10x10 unit cell cube
+create_box 1 box
+create_atoms 1 box
+
+# Define mass for aluminum
+mass 1 26.9815
+
+# Define potential
+pair_style eam/alloy
+pair_coeff * * Al99.eam.alloy Al
+
+# Define groups for compression
+# Get box dimensions first
+variable zlo equal bound(all,zmin)
+variable zhi equal bound(all,zmax)
+variable z_total equal v_zhi-v_zlo
+variable z_bottom_limit equal v_zlo+v_z_total*0.1  # Bottom 10% fixed
+variable z_top_limit equal v_zhi-v_z_total*0.1     # Top 10% for compression
+
+# Create groups
+region bottom_region block INF INF INF INF INF ${z_bottom_limit}
+region top_region block INF INF INF INF ${z_top_limit} INF
+group bottom region bottom_region
+group top region top_region
+group mobile subtract all bottom
+
+# Set initial velocities
+velocity all create 300.0 12345 dist gaussian
+
+# Define compute for stress analysis
+compute stress_tensor all stress/atom NULL
+compute pe all pe/atom
+compute ke all ke/atom
+
+# Global stress calculation
+compute pstress all pressure NULL virial
+variable vol equal vol  # Use variable instead of compute for volume
+
+# Per-atom stress components
+compute stress_xx all reduce ave c_stress_tensor[1]
+compute stress_yy all reduce ave c_stress_tensor[2]
+compute stress_zz all reduce ave c_stress_tensor[3]
+compute stress_xy all reduce ave c_stress_tensor[4]
+compute stress_xz all reduce ave c_stress_tensor[5]
+compute stress_yz all reduce ave c_stress_tensor[6]
+
+# Variables for strain calculation
+variable initial_lz equal lz
+variable current_strain equal (lz-v_initial_lz)/v_initial_lz
+variable target_strain equal -0.5
+
+# Output settings
+thermo_style custom step temp pe ke press v_vol v_current_strain c_stress_xx c_stress_yy c_stress_zz
+thermo 100
+
+# Dump configuration and stress data
+dump 1 all custom 1000 compression_trajectory.dump id type x y z c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] c_pe c_ke
+dump_modify 1 sort id
+
+# Dump stress data for analysis
+fix stress_output all ave/time 10 10 100 c_stress_xx c_stress_yy c_stress_zz c_pstress file stress_data.txt
+
+# Initial minimization
+minimize 1.0e-4 1.0e-6 1000 10000
+
+# Equilibration at 300K
+fix 1 mobile npt temp 300.0 300.0 0.1 iso 0.0 0.0 1.0
+run 10000
+unfix 1
+
+# Reset velocities after equilibration
+velocity all scale 300.0
+
+# Compression simulation
+# Fix bottom atoms
+fix freeze_bottom bottom setforce 0.0 0.0 0.0
+
+# Apply compression using fix deform
+# Compress in z-direction to 50% (strain = -0.5)
+fix compress all deform 1 z scale 0.5 remap x
+
+# Use NVT ensemble during compression to maintain temperature
+fix nvt_compress mobile nvt temp 300.0 300.0 0.1
+
+# Run compression simulation
+# Calculate number of steps needed for compression
+# Assuming we want to reach 50% compression in 50000 steps
+variable nsteps equal 50000
+run ${nsteps}
+
+# Unfix compression
+unfix compress
+unfix nvt_compress
+
+# Final relaxation
+fix final_relax mobile nvt temp 300.0 300.0 0.1
+run 10000
+unfix final_relax
+unfix freeze_bottom
+
+# Final stress analysis
+print "Final Analysis:"
+print "Final strain: $(v_current_strain)"
+print "Final stress components (GPa):"
+print "Stress XX: $(c_stress_xx*1e-4)"
+print "Stress YY: $(c_stress_yy*1e-4)" 
+print "Stress ZZ: $(c_stress_zz*1e-4)"
+
+# Save final configuration
+write_data compressed_structure.data
+
+print "Compression simulation completed successfully!"
+print "Check stress_data.txt for detailed stress evolution"
+print "Check compression_trajectory.dump for trajectory analysis"
