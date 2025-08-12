@@ -1,0 +1,186 @@
+# CREATED BY Akshansh Mishra on 11/08/2025 at 4.13 am Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International 
+# LAMMPS script for laser welding of two Al99.eam.alloy plates
+# Simulates moving laser heat source along the weld seam
+
+# Initialize simulation
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Define lattice and region for side-by-side plates (butt joint)
+lattice         fcc 4.05
+region          box block 0 50 0 20 0 8
+create_box      1 box
+
+# Create two aluminum plates side by side with a small gap for butt welding
+region          plate1 block 0 24 0 20 0 8
+region          plate2 block 26 50 0 20 0 8
+create_atoms    1 region plate1
+create_atoms    1 region plate2
+
+# Set mass for aluminum
+mass            1 26.9815
+
+# Define EAM potential for aluminum
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Set initial velocities
+velocity        all create 300.0 12345 dist gaussian
+
+# NOW define all groups AFTER atoms are created
+group           plate1 region plate1
+group           plate2 region plate2
+
+# Create welding zones for moving laser
+region          weld_zone_1 block 23 27 2 6 0 8
+region          weld_zone_2 block 23 27 6 10 0 8
+region          weld_zone_3 block 23 27 10 14 0 8
+region          weld_zone_4 block 23 27 14 18 0 8
+
+# Define groups for different laser positions
+group           weld_zone_1 region weld_zone_1
+group           weld_zone_2 region weld_zone_2  
+group           weld_zone_3 region weld_zone_3
+group           weld_zone_4 region weld_zone_4
+
+# Combined welding zone for initial setup
+group           weld_zone union weld_zone_1 weld_zone_2 weld_zone_3 weld_zone_4
+
+# Set up thermostats - define edge regions and groups
+region          bottom_edge block 0 50 0 20 0 1.0
+region          top_edge block 0 50 0 20 7.0 8
+region          left_edge block 0 2.0 0 20 0 8
+region          right_edge block 48.0 50 0 20 0 8
+region          front_edge block 0 50 0 2.0 0 8
+region          back_edge block 0 50 18.0 20 0 8
+region          edges union 6 bottom_edge top_edge left_edge right_edge front_edge back_edge
+group           edges region edges
+fix             thermostat_edges edges nvt temp 300.0 300.0 0.1
+
+# Define compute for temperature in welding zone
+compute         weld_temp weld_zone temp
+
+# Per-atom kinetic energy for temperature visualization
+compute         ke_per_atom all ke/atom
+
+# Per-atom stress components (xx, yy, zz, xy, xz, yz)
+compute         stress_tensor all stress/atom NULL
+
+# Variables for stress components
+variable        s11 atom c_stress_tensor[1]
+variable        s22 atom c_stress_tensor[2] 
+variable        s33 atom c_stress_tensor[3]
+variable        s12 atom c_stress_tensor[4]
+variable        s13 atom c_stress_tensor[5]
+variable        s23 atom c_stress_tensor[6]
+
+# Von Mises stress calculation per atom
+variable        von_mises_stress atom sqrt(0.5*((v_s11-v_s22)^2+(v_s22-v_s33)^2+(v_s33-v_s11)^2+6*(v_s12^2+v_s13^2+v_s23^2)))
+
+# Hydrostatic pressure per atom
+variable        hydrostatic_pressure atom -(v_s11+v_s22+v_s33)/3.0
+
+# Set up dynamics
+fix             dynamics all nve
+timestep        0.001
+
+# Output settings
+thermo_style    custom step temp pe ke etotal press c_weld_temp
+thermo          100
+
+# Dump configurations with stress data and kinetic energy for color mapping
+dump            1 all custom 500 welding.lammpstrj id type x y z &
+                c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] &
+                c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6] &
+                v_von_mises_stress v_hydrostatic_pressure c_ke_per_atom
+dump_modify     1 element Al
+
+# Separate dump for stress visualization with kinetic energy
+dump            stress all custom 1000 stress_evolution.lammpstrj id type x y z &
+                c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] &
+                c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6] &
+                v_von_mises_stress c_ke_per_atom
+dump_modify     stress element Al
+
+# Dump for temperature visualization using kinetic energy
+dump            temp all custom 500 temperature.lammpstrj id type x y z c_ke_per_atom
+dump_modify     temp element Al
+
+# Additional stress analysis dumps
+dump            3 all custom 5000 stress_fields.lammpstrj id type x y z &
+                c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] &
+                c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6] &
+                v_von_mises_stress v_hydrostatic_pressure c_ke_per_atom
+dump_modify     3 element Al
+
+# Restart files
+restart         10000 restart.welding
+
+# Run initial equilibration at room temperature
+run             5000
+
+# LASER WELDING PROCESS - Moving laser from one end to other
+print "Starting laser welding with moving heat source..."
+
+# Position 1: Laser at Y = 2-6
+print "Laser position 1: Y = 2-6"
+fix             laser_1 weld_zone_1 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_1
+
+# Position 2: Laser at Y = 6-10  
+print "Laser position 2: Y = 6-10"
+fix             laser_2 weld_zone_2 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_2
+
+# Position 3: Laser at Y = 10-14
+print "Laser position 3: Y = 10-14"
+fix             laser_3 weld_zone_3 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_3
+
+# Position 4: Laser at Y = 14-18
+print "Laser position 4: Y = 14-18"
+fix             laser_4 weld_zone_4 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_4
+
+print "Laser welding pass completed"
+
+# Cooling phase - let the entire weld zone cool gradually
+fix             cooling_all weld_zone langevin 2500.0 800.0 0.1 48279
+run             15000
+
+unfix           cooling_all
+fix             cooling_all weld_zone langevin 800.0 400.0 0.1 48279
+run             15000
+
+unfix           cooling_all
+fix             cooling_all weld_zone langevin 400.0 300.0 0.1 48279
+run             20000
+
+# Final equilibration
+unfix           cooling_all
+run             10000
+
+# Calculate final properties
+compute         centro all centro/atom fcc
+dump            2 all custom 1000 final_structure.lammpstrj id type x y z c_centro &
+                c_stress_tensor[1] c_stress_tensor[2] c_stress_tensor[3] &
+                c_stress_tensor[4] c_stress_tensor[5] c_stress_tensor[6] &
+                v_von_mises_stress c_ke_per_atom
+dump_modify     2 element Al
+
+# Save stress data at key simulation stages
+fix             stress_print all print 1000 &
+                "$(step) $(temp) $(press) $(c_weld_temp)" &
+                file stress_temperature_log.txt screen no
+
+# Output final structure
+write_data      final_welded_structure.data
+
+print "Moving laser welding simulation completed"
