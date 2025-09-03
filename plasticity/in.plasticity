@@ -1,0 +1,115 @@
+
+# CREATED BY Akshansh Mishra on 03/09/2025 at 5.02 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS script for modeling plasticity in metals
+# This script demonstrates tensile deformation and plastic flow
+
+# Initialize simulation
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Create simulation box and atoms
+lattice         fcc 3.615    # Aluminum lattice parameter
+region          box block 0 20 0 20 0 20
+create_box      1 box
+create_atoms    1 box
+
+# Define atomic mass (Aluminum)
+mass            1 26.9815
+
+# Define interatomic potential (EAM for aluminum)
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Initial settings
+neighbor        2.0 bin
+neigh_modify    delay 0 every 20 check no
+
+# Define groups for loading
+region          top block INF INF INF INF 18 INF
+region          bottom block INF INF INF INF INF 2
+group           top region top
+group           bottom region bottom
+group           mobile subtract all bottom
+
+# Thermodynamic output
+thermo_style    custom step temp pe ke etotal press pxx pyy pzz pxy pxz pyz vol
+thermo          100
+
+# Minimize energy
+minimize        1.0e-4 1.0e-6 100 1000
+
+# Equilibration at room temperature
+velocity        all create 300.0 12345 mom yes rot no
+fix             1 all npt temp 300.0 300.0 1.0 iso 0.0 0.0 1.0
+timestep        0.001
+run             10000
+unfix           1
+
+# Reset time and velocities for loading
+reset_timestep  0
+velocity        all scale 300.0
+
+# Apply uniaxial tensile loading
+fix             1 all npt temp 300.0 300.0 1.0 y 0.0 0.0 1.0 z 0.0 0.0 1.0
+fix             2 bottom setforce 0.0 0.0 0.0
+fix             3 top aveforce 0.0 0.0 0.1  # Apply tensile force in z-direction
+
+# Store initial box length and define variables for stress-strain analysis
+variable        lz0 equal lz
+variable        strain equal "(lz-v_lz0)/v_lz0*100"
+variable        stress equal "-pzz/10000"  # Convert to GPa
+fix             4 all print 100 "${strain} ${stress}" file stress_strain.dat
+
+# Dump atomic positions for visualization
+dump            1 all atom 500 dump.plasticity
+
+# Compute atomic stress for plasticity analysis
+compute         stress all stress/atom NULL
+compute         pe all pe/atom
+dump            2 all custom 1000 atomic_stress.dump id type x y z c_stress[1] c_stress[2] c_stress[3] c_pe
+
+# Compute centro-symmetry parameter to identify dislocations
+compute         centro all centro/atom fcc
+dump            3 all custom 1000 centro.dump id type x y z c_centro
+
+# Run deformation simulation
+run             50000
+
+# Analysis commands for post-processing
+# Compute radial distribution function
+compute         rdf all rdf 100 1 1
+fix             5 all ave/time 100 10 1000 c_rdf[*] file rdf.dat mode vector
+
+# Compute coordination number
+compute         coord all coord/atom cutoff 3.2
+compute         avg_coord all reduce ave c_coord
+fix             6 all ave/time 100 1 100 c_avg_coord file coordination.dat
+
+# Final run with analysis
+run             20000
+
+# Clean up
+unfix           1
+unfix           2  
+unfix           3
+unfix           4
+unfix           5
+unfix           6
+undump          1
+undump          2
+undump          3
+
+write_data      final_structure.data
+
+print "Simulation completed successfully!"
+print "Files generated:"
+print "- stress_strain.dat: Stress-strain curve data"
+print "- dump.plasticity: Atomic trajectories"
+print "- atomic_stress.dump: Per-atom stress data"
+print "- centro.dump: Centro-symmetry parameter for dislocation analysis"
+print "- rdf.dat: Radial distribution function"
+print "- coordination.dat: Average coordination number"
+print "- final_structure.data: Final atomic configuration"
