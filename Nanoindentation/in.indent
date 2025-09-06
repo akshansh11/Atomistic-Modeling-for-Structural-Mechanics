@@ -1,0 +1,218 @@
+# CREATED BY Akshansh Mishra on 06/09/2025 at 8.37 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International 
+# Script is under developing stage
+# Advanced Indentation Simulation with Multiple Control Methods
+# 1. Constant load indentation
+# 2. Depth-controlled indentation with hold and retraction
+
+units metal
+echo both
+atom_style atomic
+dimension 3
+boundary p s p
+
+# Create simulation box
+region box block 0 140 0 100 0 140 units box
+create_box 1 box
+
+# Create copper lattice
+lattice fcc 3.61
+region cu block 0 140 0 100 0 140 units box
+create_atoms 1 region cu units box
+
+timestep 0.002
+
+# Copper EAM potential
+pair_style eam/alloy
+pair_coeff * * Cu_zhou.eam.alloy Cu
+
+# Energy Minimization
+minimize 1.0e-4 1.0e-5 10000 10000
+
+# Define regions and groups
+region anvil1 block 0 140 0 25 0 140 units box
+group anvil1 region anvil1
+region anvil2 block 0 25 0 100 0 140 units box
+group anvil2 region anvil2
+region anvil3 block 115 140 0 100 0 140 units box
+group anvil3 region anvil3
+group anvil union anvil1 anvil2 anvil3
+group mobile subtract all anvil
+
+# Temperature control
+compute new mobile temp
+velocity mobile create 300 482748 temp new
+fix 1 mobile nvt temp 300.0 300.0 0.05
+fix 2 anvil setforce 0.0 0.0 0.0
+
+#=============================================================================
+# METHOD 1: CONSTANT LOAD INDENTATION
+#=============================================================================
+
+# Uncomment this section for constant load indentation
+# variable target_load equal 50.0  # Target load in eV/Angstrom
+# variable kp equal 0.1            # Proportional gain for PID controller
+# variable ki equal 0.01           # Integral gain
+# variable kd equal 0.001          # Derivative gain
+# 
+# variable y_indent equal 100.1    # Initial indenter position
+# variable error equal 0.0         # Force error
+# variable integral equal 0.0      # Integral term
+# variable derivative equal 0.0    # Derivative term
+# variable prev_error equal 0.0    # Previous error
+# variable velocity equal 0.0      # Indenter velocity
+# 
+# # Initial indenter setup
+# fix 4 mobile indent 1000 sphere 70 ${y_indent} 70 10.0 units box
+# 
+# # Variables for PID control
+# variable current_force equal "sqrt(f_4[1]^2 + f_4[2]^2 + f_4[3]^2)"
+# variable step_dt equal "step*dt"
+# 
+# # PID controller implementation (would need custom scripting)
+# # This is a simplified version - full PID requires external scripting
+# variable y_new equal "v_y_indent - 0.01*(v_current_force - v_target_load)"
+# 
+# reset_timestep 0
+# thermo 100
+# thermo_style custom step temp v_current_force v_target_load
+# 
+# # Note: True constant load requires external scripting or custom fixes
+# # This provides a simplified approach
+# run 10000
+
+#=============================================================================
+# METHOD 2: DEPTH-CONTROLLED INDENTATION WITH HOLD AND RETRACTION
+#=============================================================================
+
+# Indentation parameters
+variable indent_depth equal 5.0     # Target indentation depth (Angstrom)
+variable indent_speed equal 0.05    # Indentation speed (Angstrom/ps)
+variable hold_time equal 2000       # Hold time (timesteps)
+variable retract_speed equal 0.1    # Retraction speed (Angstrom/ps)
+
+# Initial indenter position
+variable y_initial equal 100.1
+variable y_surface equal 100.0      # Approximate surface position
+variable y_target equal "v_y_surface - v_indent_depth"
+
+# Calculate timing
+variable indent_steps equal "v_indent_depth / (v_indent_speed * dt)"
+variable retract_steps equal "v_indent_depth / (v_retract_speed * dt)"
+
+print "Indentation will take ${indent_steps} steps"
+print "Target depth: ${indent_depth} Angstrom"
+print "Hold time: ${hold_time} steps"
+print "Retraction will take ${retract_steps} steps"
+
+# Output variables
+variable disp equal "step*dt*v_indent_speed"
+variable f1 equal f_4[1]
+variable f2 equal f_4[2] 
+variable f3 equal f_4[3]
+variable load equal "sqrt(v_f1^2 + v_f2^2 + v_f3^2)"
+variable stp equal step
+
+# Setup dumps and output
+dump 1 all atom 100 cryst_indent_controlled.lammpstrj
+thermo 100
+
+reset_timestep 0
+
+#-----------------------------------------------------------------------------
+# PHASE 1: INDENTATION TO TARGET DEPTH
+#-----------------------------------------------------------------------------
+print "=== PHASE 1: INDENTATION ==="
+
+variable y_indent equal "v_y_initial - step*dt*v_indent_speed"
+fix 4 mobile indent 1000 sphere 70 v_y_indent 70 10.0 units box
+
+thermo_style custom step temp v_y_indent f_4[2] v_load v_disp
+fix output1 all print 100 "${stp} ${load} ${disp} INDENT" title "step load disp phase" file indentation_data.txt screen no
+
+# Run until target depth is reached
+run ${indent_steps}
+
+#-----------------------------------------------------------------------------
+# PHASE 2: HOLD AT MAXIMUM DEPTH
+#-----------------------------------------------------------------------------
+print "=== PHASE 2: HOLD AT DEPTH ==="
+
+unfix 4
+unfix output1
+
+# Hold indenter at target position
+variable y_hold equal ${y_target}
+fix 4 mobile indent 1000 sphere 70 ${y_hold} 70 10.0 units box
+
+# Update output variables for hold phase
+variable disp_hold equal ${indent_depth}
+fix output2 all print 100 "${stp} ${load} ${disp_hold} HOLD" append indentation_data.txt screen no
+
+# Hold at depth
+run ${hold_time}
+
+#-----------------------------------------------------------------------------
+# PHASE 3: RETRACTION
+#-----------------------------------------------------------------------------
+print "=== PHASE 3: RETRACTION ==="
+
+unfix 4
+unfix output2
+
+# Reset step counter for retraction phase
+variable step_offset equal step
+variable y_retract equal "v_y_target + (step - v_step_offset)*dt*v_retract_speed"
+variable disp_retract equal "v_indent_depth - (step - v_step_offset)*dt*v_retract_speed"
+
+fix 4 mobile indent 1000 sphere 70 v_y_retract 70 10.0 units box
+
+thermo_style custom step temp v_y_retract f_4[2] v_load v_disp_retract
+fix output3 all print 100 "${stp} ${load} ${disp_retract} RETRACT" append indentation_data.txt screen no
+
+# Retract to original position
+run ${retract_steps}
+
+#-----------------------------------------------------------------------------
+# PHASE 4: FINAL RELAXATION
+#-----------------------------------------------------------------------------
+print "=== PHASE 4: RELAXATION ==="
+
+unfix 4
+unfix output3
+
+# Let system relax without indenter
+thermo_style custom step temp pe ke etotal
+run 5000
+
+print "Indentation simulation completed!"
+print "Data saved to: indentation_data.txt"
+print "Trajectory saved to: cryst_indent_controlled.lammpstrj"
+
+#=============================================================================
+# ANALYSIS SUGGESTIONS
+#=============================================================================
+# 
+# The output file contains columns: step, load, displacement, phase
+# 
+# To analyze:
+# 1. Plot load vs displacement for hysteresis loop
+# 2. Calculate hardness = max_load / contact_area
+# 3. Determine elastic modulus from unloading curve
+# 4. Analyze plastic deformation and recovery
+#
+# Example Python analysis:
+# import numpy as np
+# import matplotlib.pyplot as plt
+# 
+# data = np.loadtxt('indentation_data.txt', skiprows=1)
+# steps, loads, disps, phases = data.T
+# 
+# plt.figure(figsize=(10,6))
+# plt.plot(disps, loads, 'b-', linewidth=2)
+# plt.xlabel('Displacement (Å)')
+# plt.ylabel('Load (eV/Å)')
+# plt.title('Load-Displacement Curve')
+# plt.grid(True)
+# plt.show()
+#=============================================================================
