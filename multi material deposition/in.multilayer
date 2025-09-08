@@ -1,0 +1,415 @@
+# CREATED BY Akshansh Mishra on 04/08/2025 at 12.41 am Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS Script for Multi-Material Extrusion Additive Manufacturing Process
+# Corrected version - Simulates 7-layer deposition with different polymer materials and inter-layer bonding
+
+# Initialize simulation
+units           real
+dimension       3
+boundary        p p f
+atom_style      molecular
+
+# Define simulation box (60 x 60 x 35 Angstroms - larger for 7 layers)
+region          box block 0 60 0 60 0 35
+create_box      6 box bond/types 4 angle/types 4 dihedral/types 3
+
+# Define atom types for multi-material system
+# Type 1: Polymer A backbone atoms (PLA - C)
+# Type 2: Polymer A side chain atoms (PLA - H)
+# Type 3: Polymer B backbone atoms (ABS - C)
+# Type 4: Polymer B side chain atoms (ABS - H)
+# Type 5: Polymer C backbone atoms (PETG - C)
+# Type 6: Substrate atoms (Si)
+
+# Define lattice for substrate (FCC structure)
+lattice         fcc 4.05
+region          substrate block 0 60 0 60 0 2
+create_atoms    6 region substrate
+
+# Define masses (amu)
+mass            1 12.01    # PLA Carbon
+mass            2 1.008    # PLA Hydrogen
+mass            3 12.01    # ABS Carbon
+mass            4 1.008    # ABS Hydrogen
+mass            5 12.01    # PETG Carbon
+mass            6 28.086   # Silicon substrate
+
+# Define pair potentials for multi-material interactions
+pair_style      lj/cut 12.0
+
+# PLA-PLA interactions (Type 1-2)
+pair_coeff      1 1 0.070 3.55    # PLA C-C
+pair_coeff      2 2 0.030 2.50    # PLA H-H
+pair_coeff      1 2 0.046 3.02    # PLA C-H
+
+# ABS-ABS interactions (Type 3-4)
+pair_coeff      3 3 0.075 3.60    # ABS C-C (slightly stronger)
+pair_coeff      4 4 0.032 2.52    # ABS H-H
+pair_coeff      3 4 0.049 3.06    # ABS C-H
+
+# PETG-PETG interactions (Type 5)
+pair_coeff      5 5 0.080 3.65    # PETG C-C (strongest)
+
+# Substrate interactions
+pair_coeff      6 6 0.150 4.05    # Si-Si
+
+# Cross-material interactions (for inter-layer bonding)
+pair_coeff      1 3 0.072 3.57    # PLA-ABS C-C
+pair_coeff      1 4 0.047 3.04    # PLA C - ABS H
+pair_coeff      2 3 0.048 3.05    # PLA H - ABS C
+pair_coeff      2 4 0.031 2.51    # PLA H - ABS H
+
+pair_coeff      1 5 0.075 3.60    # PLA-PETG C-C
+pair_coeff      2 5 0.049 3.07    # PLA H - PETG C
+pair_coeff      3 5 0.077 3.62    # ABS-PETG C-C
+pair_coeff      4 5 0.050 3.09    # ABS H - PETG C
+
+# Substrate-polymer interactions
+pair_coeff      1 6 0.102 3.80    # PLA C-Si
+pair_coeff      2 6 0.067 3.27    # PLA H-Si
+pair_coeff      3 6 0.106 3.82    # ABS C-Si
+pair_coeff      4 6 0.069 3.29    # ABS H-Si
+pair_coeff      5 6 0.110 3.85    # PETG C-Si
+
+# Define bond potentials for different materials
+bond_style      harmonic
+bond_coeff      1 268.0 1.529     # PLA C-C bond
+bond_coeff      2 340.0 1.09      # PLA C-H bond
+bond_coeff      3 275.0 1.535     # ABS C-C bond (slightly different)
+bond_coeff      4 280.0 1.540     # PETG C-C bond (strongest)
+
+# Define angle potentials
+angle_style     harmonic
+angle_coeff     1 58.35 112.7     # PLA C-C-C angle
+angle_coeff     2 37.50 110.7     # PLA H-C-H angle
+angle_coeff     3 60.00 113.0     # ABS C-C-C angle
+angle_coeff     4 62.00 114.0     # PETG C-C-C angle
+
+# Define dihedral potentials
+dihedral_style  opls
+dihedral_coeff  1 1.3 -0.05 0.2 0.0   # PLA C-C-C-C dihedral
+dihedral_coeff  2 1.4 -0.07 0.25 0.0  # ABS C-C-C-C dihedral
+dihedral_coeff  3 1.5 -0.10 0.30 0.0  # PETG C-C-C-C dihedral
+
+# Neighbor settings
+neighbor        2.0 bin
+neigh_modify    delay 0 every 20 check no
+
+# Groups
+group           substrate type 6
+group           pla type 1 2
+group           abs type 3 4
+group           petg type 5
+group           all_polymers type 1 2 3 4 5
+
+# Initial velocities
+velocity        all create 300.0 12345 mom yes rot yes
+
+# Fix substrate atoms
+fix             1 substrate setforce 0.0 0.0 0.0
+
+# Thermostat for temperature control
+fix             2 all_polymers nvt temp 300.0 500.0 100.0
+
+# Define extrusion variables for 7 layers
+variable        layer_height equal 4.0
+variable        extrusion_temp_pla equal 450.0
+variable        extrusion_temp_abs equal 520.0
+variable        extrusion_temp_petg equal 480.0
+variable        cooling_rate equal -2.0
+
+# Dump configuration
+dump            1 all atom 1000 dump.multi_material
+thermo_style    custom step temp pe ke etotal press vol
+thermo          1000
+timestep        1.0
+
+# Layer 1 deposition - PLA (Types 1,2) - Oval/racetrack shape
+print           "Depositing Layer 1 - PLA Material (Oval Pattern)"
+lattice         none 1.0
+
+# Create oval/racetrack shaped region using union of cylinder and blocks
+region          oval_center cylinder z 30 30 8 5 9 units box
+region          oval_left cylinder z 20 30 8 5 9 units box  
+region          oval_right cylinder z 40 30 8 5 9 units box
+region          oval_connect block 20 40 22 38 5 9
+region          layer1 union 4 oval_center oval_left oval_right oval_connect
+
+create_atoms    1 random 150 54321 layer1
+create_atoms    2 random 300 65432 layer1
+
+# Create bonds for PLA in layer 1
+run             500
+fix             bond_create1 pla bond/create 50 1 1 2.0 1 prob 0.4 12345
+run             1500
+unfix           bond_create1
+
+# Initial equilibration for layer 1
+fix             temp1 pla nvt temp 300.0 450.0 100.0
+run             5000
+unfix           temp1
+
+# Layer 2 deposition - ABS (Types 3,4) - Oval/racetrack shape
+print           "Depositing Layer 2 - ABS Material (Oval Pattern)"
+
+# Create second layer oval with slight offset for realistic tool path
+region          oval2_center cylinder z 31 29 8 9 13 units box
+region          oval2_left cylinder z 21 29 8 9 13 units box  
+region          oval2_right cylinder z 41 29 8 9 13 units box
+region          oval2_connect block 21 41 21 37 9 13
+region          layer2 union 4 oval2_center oval2_left oval2_right oval2_connect
+
+create_atoms    3 random 150 76543 layer2
+create_atoms    4 random 300 87654 layer2
+
+# Create bonds for ABS in layer 2
+run             500
+fix             bond_create2 abs bond/create 50 3 3 2.0 3 prob 0.4 23456
+run             1500
+unfix           bond_create2
+
+# Inter-layer bonding between PLA and ABS
+fix             inter_bond_12 all_polymers bond/create 100 1 3 2.8 1 prob 0.15 34567
+fix             temp2 abs nvt temp 300.0 520.0 100.0
+run             8000
+unfix           temp2
+unfix           inter_bond_12
+
+# Layer 3 deposition - PETG (Type 5) - Oval/racetrack shape
+print           "Depositing Layer 3 - PETG Material (Oval Pattern)"
+
+# Create third layer oval
+region          oval3_center cylinder z 30 31 8 13 17 units box
+region          oval3_left cylinder z 20 31 8 13 17 units box  
+region          oval3_right cylinder z 40 31 8 13 17 units box
+region          oval3_connect block 20 40 23 39 13 17
+region          layer3 union 4 oval3_center oval3_left oval3_right oval3_connect
+
+create_atoms    5 random 200 98765 layer3
+
+# Create bonds for PETG in layer 3
+run             500
+fix             bond_create3 petg bond/create 50 5 5 2.0 4 prob 0.4 45678
+run             1500
+unfix           bond_create3
+
+# Inter-layer bonding between ABS and PETG
+fix             inter_bond_23 all_polymers bond/create 100 3 5 2.8 1 prob 0.15 56789
+fix             temp3 petg nvt temp 300.0 480.0 100.0
+run             8000
+unfix           temp3
+unfix           inter_bond_23
+
+# Layer 4 deposition - PLA (Types 1,2) - Oval/racetrack shape
+print           "Depositing Layer 4 - PLA Material (Oval Pattern)"
+
+# Create fourth layer oval with slight path variation
+region          oval4_center cylinder z 29 30 8 17 21 units box
+region          oval4_left cylinder z 19 30 8 17 21 units box  
+region          oval4_right cylinder z 39 30 8 17 21 units box
+region          oval4_connect block 19 39 22 38 17 21
+region          layer4 union 4 oval4_center oval4_left oval4_right oval4_connect
+
+create_atoms    1 random 150 13579 layer4
+create_atoms    2 random 300 24680 layer4
+
+# Create bonds and inter-layer bonding
+run             500
+fix             bond_create4 pla bond/create 50 1 1 2.0 1 prob 0.4 67890
+run             1500
+unfix           bond_create4
+
+fix             inter_bond_34 all_polymers bond/create 100 5 1 2.8 1 prob 0.15 78901
+fix             temp4 pla nvt temp 300.0 450.0 100.0
+run             8000
+unfix           temp4
+unfix           inter_bond_34
+
+# Layer 5 deposition - ABS (Types 3,4) - Oval/racetrack shape
+print           "Depositing Layer 5 - ABS Material (Oval Pattern)"
+
+# Create fifth layer oval
+region          oval5_center cylinder z 31 31 8 21 25 units box
+region          oval5_left cylinder z 21 31 8 21 25 units box  
+region          oval5_right cylinder z 41 31 8 21 25 units box
+region          oval5_connect block 21 41 23 39 21 25
+region          layer5 union 4 oval5_center oval5_left oval5_right oval5_connect
+
+create_atoms    3 random 150 35791 layer5
+create_atoms    4 random 300 46802 layer5
+
+# Create bonds and inter-layer bonding
+run             500
+fix             bond_create5 abs bond/create 50 3 3 2.0 3 prob 0.4 89012
+run             1500
+unfix           bond_create5
+
+fix             inter_bond_45 all_polymers bond/create 100 1 3 2.8 1 prob 0.15 90123
+fix             temp5 abs nvt temp 300.0 520.0 100.0
+run             8000
+unfix           temp5
+unfix           inter_bond_45
+
+# Layer 6 deposition - PETG (Type 5) - Oval/racetrack shape
+print           "Depositing Layer 6 - PETG Material (Oval Pattern)"
+
+# Create sixth layer oval
+region          oval6_center cylinder z 30 29 8 25 29 units box
+region          oval6_left cylinder z 20 29 8 25 29 units box  
+region          oval6_right cylinder z 40 29 8 25 29 units box
+region          oval6_connect block 20 40 21 37 25 29
+region          layer6 union 4 oval6_center oval6_left oval6_right oval6_connect
+
+create_atoms    5 random 200 57913 layer6
+
+# Create bonds and inter-layer bonding
+run             500
+fix             bond_create6 petg bond/create 50 5 5 2.0 4 prob 0.4 01234
+run             1500
+unfix           bond_create6
+
+fix             inter_bond_56 all_polymers bond/create 100 3 5 2.8 1 prob 0.15 12345
+fix             temp6 petg nvt temp 300.0 480.0 100.0
+run             8000
+unfix           temp6
+unfix           inter_bond_56
+
+# Layer 7 deposition - PLA (Types 1,2) - Oval/racetrack shape (Top Layer)
+print           "Depositing Layer 7 - PLA Material (Oval Pattern - Top Layer)"
+
+# Create seventh layer oval - top layer
+region          oval7_center cylinder z 30 30 8 29 33 units box
+region          oval7_left cylinder z 20 30 8 29 33 units box  
+region          oval7_right cylinder z 40 30 8 29 33 units box
+region          oval7_connect block 20 40 22 38 29 33
+region          layer7 union 4 oval7_center oval7_left oval7_right oval7_connect
+
+create_atoms    1 random 150 68024 layer7
+create_atoms    2 random 300 79135 layer7
+
+# Create bonds and inter-layer bonding
+run             500
+fix             bond_create7 pla bond/create 50 1 1 2.0 1 prob 0.4 23456
+run             1500
+unfix           bond_create7
+
+fix             inter_bond_67 all_polymers bond/create 100 5 1 2.8 1 prob 0.15 34567
+fix             temp7 pla nvt temp 300.0 450.0 100.0
+run             8000
+unfix           temp7
+unfix           inter_bond_67
+
+# Final thermal processing - global annealing
+print           "Starting final thermal processing"
+fix             final_anneal all_polymers nvt temp 300.0 500.0 100.0
+run             15000
+
+# Gradual cooling to room temperature
+fix             final_cool all_polymers temp/rescale 100 500.0 300.0 0.02 1.0
+run             15000
+unfix           final_anneal
+unfix           final_cool
+
+# Analysis phase - Multi-material properties
+print           "Starting analysis phase"
+
+# Compute stress-strain behavior
+compute         stress all stress/atom NULL
+compute         pe_atom all pe/atom
+compute         ke_atom all ke/atom
+
+# Material-specific analysis - Define groups first before using regions
+group           layer1_pla type 1 2
+group           layer2_abs type 3 4  
+group           layer3_petg type 5
+group           layer4_pla2 type 1 2
+group           layer5_abs2 type 3 4
+group           layer6_petg2 type 5
+group           layer7_pla3 type 1 2
+
+# Center of mass tracking
+compute         center_mass_x all reduce ave x
+compute         center_mass_y all reduce ave y
+compute         center_mass_z all reduce ave z
+
+fix             center_mass_track all ave/time 1000 1 1000 c_center_mass_x c_center_mass_y c_center_mass_z file center_of_mass.dat
+
+# Compute bond statistics
+variable        nbonds equal bonds
+print           "Total number of bonds: ${nbonds}"
+
+# Compute radial distribution functions for each material
+compute         rdf_pla pla rdf 100 1 1 cutoff 10.0
+compute         rdf_abs abs rdf 100 3 3 cutoff 10.0
+compute         rdf_petg petg rdf 100 5 5 cutoff 10.0
+
+fix             rdf_pla_out pla ave/time 1000 1 1000 c_rdf_pla[*] file rdf_pla.dat mode vector
+fix             rdf_abs_out abs ave/time 1000 1 1000 c_rdf_abs[*] file rdf_abs.dat mode vector
+fix             rdf_petg_out petg ave/time 1000 1 1000 c_rdf_petg[*] file rdf_petg.dat mode vector
+
+# Coordination number analysis
+compute         coord_num all coord/atom cutoff 3.0
+compute         avg_coord all reduce ave c_coord_num
+fix             coord_avg all ave/time 1000 1 1000 c_avg_coord file coordination.dat
+
+# Energy analysis by material
+compute         pe_pla pla pe/atom
+compute         pe_abs abs pe/atom
+compute         pe_petg petg pe/atom
+
+compute         pe_total_pla pla reduce sum c_pe_pla
+compute         pe_total_abs abs reduce sum c_pe_abs
+compute         pe_total_petg petg reduce sum c_pe_petg
+
+fix             energy_materials all ave/time 100 1 100 c_pe_total_pla c_pe_total_abs c_pe_total_petg file energy_by_material.dat
+
+# Interface bonding analysis
+if              "${nbonds} > 0" then &
+"compute         bonds_local all property/local batom1 batom2 btype" &
+"compute         bond_dist all bond/local dist" &
+"fix             bond_output all ave/histo 1000 1 1000 1.0 4.0 50 c_bond_dist mode vector file bond_distances_multi.dat" &
+else &
+"print           'No bonds found - skipping bond analysis'"
+
+# Final equilibration
+run             25000
+
+# Output final multi-material structure
+write_data      final_multi_material_structure.data
+
+# Calculate material composition
+variable        n_pla equal count(pla)
+variable        n_abs equal count(abs)
+variable        n_petg equal count(petg)
+variable        n_substrate equal count(substrate)
+variable        total_atoms equal atoms
+
+print           "Multi-Material Simulation Complete"
+print           "Total atoms: ${total_atoms}"
+print           "PLA atoms: ${n_pla}"
+print           "ABS atoms: ${n_abs}"
+print           "PETG atoms: ${n_petg}"
+print           "Substrate atoms: ${n_substrate}"
+print           "Final temperature: $(temp)"
+print           "Final potential energy: $(pe)"
+
+# Material ratios
+variable        pla_fraction equal ${n_pla}/${total_atoms}
+variable        abs_fraction equal ${n_abs}/${total_atoms}
+variable        petg_fraction equal ${n_petg}/${total_atoms}
+
+print           "Material fractions:"
+print           "PLA: ${pla_fraction}"
+print           "ABS: ${abs_fraction}"
+print           "PETG: ${petg_fraction}"
+
+# Additional structural analysis
+compute         gyration_pla pla gyration
+compute         gyration_abs abs gyration
+compute         gyration_petg petg gyration
+
+fix             gyration_out all ave/time 1000 1 1000 c_gyration_pla c_gyration_abs c_gyration_petg file gyration_radius.dat
+
+# End simulation
+print           "Multi-material 7-layer simulation finished successfully"
+print           "All analysis files written to current directory"
