@@ -1,0 +1,93 @@
+# LAMMPS script for simple catalytic surface reaction
+# Models gas molecules adsorbing on a metal catalyst surface
+
+# Initialization
+units metal
+dimension 3
+boundary p p s
+atom_style atomic
+atom_modify map array
+
+# Create simulation box (in lattice units first)
+lattice fcc 4.05  # Aluminum-like lattice constant
+region box block 0 10 0 10 0 25 units lattice
+create_box 3 box
+
+# Create catalyst surface (type 1 = catalyst atoms) in lattice units
+region catalyst block 0 10 0 10 0 6 units lattice
+create_atoms 1 region catalyst
+
+# Switch to box units for gas molecules
+region gas block 0 40 0 40 30 60 units box
+create_atoms 2 random 30 12345 gas
+create_atoms 3 random 30 67890 gas
+
+# Define masses (Al for catalyst, lighter for gas molecules)
+mass 1 26.98  # Catalyst (Al)
+mass 2 16.00  # Reactant A (O-like)
+mass 3 28.01  # Reactant B (N-like)
+
+# Lennard-Jones potential parameters
+pair_style lj/cut 8.5
+
+# Catalyst-catalyst interaction (strong)
+pair_coeff 1 1 0.30 2.55
+
+# Gas-gas interactions (weak)
+pair_coeff 2 2 0.05 3.00
+pair_coeff 3 3 0.05 3.20
+
+# Catalyst-gas interactions (moderate - adsorption)
+pair_coeff 1 2 0.15 2.80
+pair_coeff 1 3 0.15 2.90
+
+# Gas-gas cross interaction
+pair_coeff 2 3 0.08 3.10
+
+# Fix catalyst surface atoms (bottom 2 layers)
+region fixed block 0 10 0 10 0 2 units lattice
+group catalyst type 1
+group fixed region fixed
+group mobile subtract all fixed
+fix freeze fixed setforce 0.0 0.0 0.0
+
+# Define reactant groups
+group reactantA type 2
+group reactantB type 3
+
+# Temperature and dynamics
+velocity mobile create 300.0 87287
+fix nvt mobile nvt temp 300.0 300.0 0.1
+
+# Apply gentle gravity to pull molecules toward surface
+fix gravity mobile addforce 0.0 0.0 -0.1
+
+# Prevent atoms from leaving simulation box
+fix walls mobile wall/reflect zhi EDGE
+
+# Compute temperature
+compute temp mobile temp
+
+# Output settings
+thermo 100
+thermo_style custom step temp pe ke etotal press
+
+# Dump trajectory for OVITO visualization
+dump trajectory all custom 100 catalysis.lammpstrj id type x y z vx vy vz
+dump_modify trajectory sort id
+
+# Run simulation with smaller timestep initially
+timestep 0.0005
+run 5000
+
+# Increase timestep
+timestep 0.001
+run 5000
+
+# Cool down to observe adsorption
+unfix nvt
+fix nvt2 mobile nvt temp 300.0 100.0 0.1
+run 10000
+
+write_data final_structure.data
+print "Simulation complete - visualize catalysis.lammpstrj in OVITO"
