@@ -1,0 +1,79 @@
+
+# CREATED BY Akshansh Mishra on 04/11/2025 at 8.42 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS script for Impact Welding Simulation
+# Two metal blocks collide at controlled velocity
+
+# Initialization
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Create simulation box
+lattice         fcc 4.05  # Aluminum lattice constant
+region          simbox block 0 50 0 20 0 20
+create_box      2 simbox
+
+# Create two blocks with gap between them
+region          base block 0 20 0 20 0 20
+region          flyer block 30 50 0 20 0 20
+create_atoms    1 region base
+create_atoms    2 region flyer
+
+# Define mass for both atom types (Aluminum)
+mass            1 26.98
+mass            2 26.98
+
+# Interatomic potential - EAM for Aluminum
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al Al
+
+# Define groups
+group           base type 1
+group           flyer type 2
+
+# Equilibrate both blocks first at 300K
+velocity        all create 300.0 482748 dist gaussian
+fix             eq all nvt temp 300.0 300.0 0.1
+run             1000
+unfix           eq
+
+# Set impact velocities
+velocity        base set 0.0 0.0 0.0
+velocity        flyer set -150.0 0.0 0.0  # 150 m/s impact velocity
+
+# Compute stress per atom
+compute         stress all stress/atom NULL
+compute         ke all ke/atom
+compute         pe all pe/atom
+
+# Thermodynamic output
+thermo          50
+thermo_style    custom step temp pe ke etotal press vol
+
+# Dump trajectory with stress information
+dump            1 all custom 50 impact_welding.dump id type x y z vx vy vz &
+                c_stress[1] c_stress[2] c_stress[3] c_stress[4] c_stress[5] c_stress[6] &
+                c_ke c_pe
+
+dump_modify     1 sort id
+
+# Use NVE with Langevin thermostat to control temperature
+fix             1 all nve
+fix             2 all langevin 300.0 500.0 0.1 48279
+
+# Neighbor list settings
+neighbor        2.0 bin
+neigh_modify    delay 5 every 1
+
+# Smaller timestep for stability
+timestep        0.0005
+
+# Run simulation
+run             10000
+
+# Write final configuration
+write_data      impact_welding_final.data
+
+print           "Impact welding simulation completed"
