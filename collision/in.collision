@@ -1,0 +1,68 @@
+# There can be some bugs, but users can tweak the parameters if the particles fly out of the simulation box
+# CREATED BY Akshansh Mishra on 07/11/2025 at 9.25 pm Central European Summer Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS script for collision of two Al99 alloy balls
+# Aluminum alloy (99% Al) collision simulation
+
+# Initialization
+units           metal
+dimension       3
+atom_style      atomic
+boundary        s s s
+
+# Define lattice for Aluminum FIRST
+lattice         fcc 4.05
+
+# Create simulation box with shrink-wrap that expands with atoms
+region          box block -200 200 -100 100 -100 100
+create_box      1 box
+
+# Create two spherical regions for the balls
+region          ball1 sphere -50 0 0 15
+region          ball2 sphere  50 0 0 15
+
+# Create atoms in the ball regions
+create_atoms    1 region ball1
+create_atoms    1 region ball2
+
+# Define atomic mass for Aluminum
+mass            1 26.9815
+
+# Define interatomic potential for Aluminum
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+# Minimize initial structure
+minimize        1.0e-4 1.0e-6 1000 10000
+
+# Define groups SIMPLY by X coordinate
+region          left_side block -200 -1 -100 100 -100 100
+region          right_side block 1 200 -100 100 -100 100
+group           ball_left region left_side
+group           ball_right region right_side
+
+# Set velocities for collision (reduced to prevent atom loss)
+velocity        ball_left set 5.0 0.0 0.0
+velocity        ball_right set -5.0 0.0 0.0
+
+# Neighbor list settings
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# Time integration
+fix             1 all nve
+
+# Thermodynamic output
+thermo          100
+thermo_style    custom step temp ke pe etotal press atoms
+
+# Dump atomic positions
+dump            1 all custom 50 collision.lammpstrj id type x y z vx vy vz
+dump_modify     1 sort id
+
+# Run simulation
+timestep        0.001
+run             20000
+
+# Write final configuration
+write_data      final_collision.data
