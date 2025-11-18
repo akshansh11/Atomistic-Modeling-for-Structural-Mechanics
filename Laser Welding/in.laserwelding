@@ -1,4 +1,5 @@
-# CREATED BY Akshansh Mishra on 11/08/2025 at 4.13 am Central European Summer Time
+# CREATED BY Akshansh Mishra on 18/11/2025 at 3.03 am Central European Time
+# Modified to move laser along long length (X direction)
 # This work is licensed under Creative Commons Attribution 4.0 International 
 # LAMMPS script for laser welding of two Al99.eam.alloy plates
 # Simulates moving laser heat source along the weld seam
@@ -15,8 +16,9 @@ region          box block 0 50 0 20 0 8
 create_box      1 box
 
 # Create two aluminum plates side by side with a small gap for butt welding
-region          plate1 block 0 24 0 20 0 8
-region          plate2 block 26 50 0 20 0 8
+# Now plates are separated in Y direction instead of X
+region          plate1 block 0 50 0 9 0 8
+region          plate2 block 0 50 11 20 0 8
 create_atoms    1 region plate1
 create_atoms    1 region plate2
 
@@ -34,20 +36,25 @@ velocity        all create 300.0 12345 dist gaussian
 group           plate1 region plate1
 group           plate2 region plate2
 
-# Create welding zones for moving laser
-region          weld_zone_1 block 23 27 2 6 0 8
-region          weld_zone_2 block 23 27 6 10 0 8
-region          weld_zone_3 block 23 27 10 14 0 8
-region          weld_zone_4 block 23 27 14 18 0 8
+# Create welding zones for moving laser along X direction (long length)
+# Laser moves from X=2 to X=48 along the weld seam (Y=8-12, centered at gap)
+region          weld_zone_1 block 2 10 8 12 0 8
+region          weld_zone_2 block 10 18 8 12 0 8
+region          weld_zone_3 block 18 26 8 12 0 8
+region          weld_zone_4 block 26 34 8 12 0 8
+region          weld_zone_5 block 34 42 8 12 0 8
+region          weld_zone_6 block 42 48 8 12 0 8
 
 # Define groups for different laser positions
 group           weld_zone_1 region weld_zone_1
 group           weld_zone_2 region weld_zone_2  
 group           weld_zone_3 region weld_zone_3
 group           weld_zone_4 region weld_zone_4
+group           weld_zone_5 region weld_zone_5
+group           weld_zone_6 region weld_zone_6
 
 # Combined welding zone for initial setup
-group           weld_zone union weld_zone_1 weld_zone_2 weld_zone_3 weld_zone_4
+group           weld_zone union weld_zone_1 weld_zone_2 weld_zone_3 weld_zone_4 weld_zone_5 weld_zone_6
 
 # Set up thermostats - define edge regions and groups
 region          bottom_edge block 0 50 0 20 0 1.0
@@ -122,32 +129,44 @@ restart         10000 restart.welding
 # Run initial equilibration at room temperature
 run             5000
 
-# LASER WELDING PROCESS - Moving laser from one end to other
-print "Starting laser welding with moving heat source..."
+# LASER WELDING PROCESS - Moving laser along X direction (long length)
+print "Starting laser welding with moving heat source along long length..."
 
-# Position 1: Laser at Y = 2-6
-print "Laser position 1: Y = 2-6"
+# Position 1: Laser at X = 2-10
+print "Laser position 1: X = 2-10"
 fix             laser_1 weld_zone_1 langevin 300.0 2500.0 0.1 48279
 run             5000
 unfix           laser_1
 
-# Position 2: Laser at Y = 6-10  
-print "Laser position 2: Y = 6-10"
+# Position 2: Laser at X = 10-18  
+print "Laser position 2: X = 10-18"
 fix             laser_2 weld_zone_2 langevin 300.0 2500.0 0.1 48279
 run             5000
 unfix           laser_2
 
-# Position 3: Laser at Y = 10-14
-print "Laser position 3: Y = 10-14"
+# Position 3: Laser at X = 18-26
+print "Laser position 3: X = 18-26"
 fix             laser_3 weld_zone_3 langevin 300.0 2500.0 0.1 48279
 run             5000
 unfix           laser_3
 
-# Position 4: Laser at Y = 14-18
-print "Laser position 4: Y = 14-18"
+# Position 4: Laser at X = 26-34
+print "Laser position 4: X = 26-34"
 fix             laser_4 weld_zone_4 langevin 300.0 2500.0 0.1 48279
 run             5000
 unfix           laser_4
+
+# Position 5: Laser at X = 34-42
+print "Laser position 5: X = 34-42"
+fix             laser_5 weld_zone_5 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_5
+
+# Position 6: Laser at X = 42-48
+print "Laser position 6: X = 42-48"
+fix             laser_6 weld_zone_6 langevin 300.0 2500.0 0.1 48279
+run             5000
+unfix           laser_6
 
 print "Laser welding pass completed"
 
@@ -183,4 +202,4 @@ fix             stress_print all print 1000 &
 # Output final structure
 write_data      final_welded_structure.data
 
-print "Moving laser welding simulation completed"
+print "Moving laser welding simulation completed along long length"
