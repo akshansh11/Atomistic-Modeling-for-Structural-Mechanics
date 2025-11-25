@@ -1,0 +1,80 @@
+# CREATED BY Akshansh Mishra on 23/11/2025 at 10.45 pm Central European Time
+# This work is licensed under Creative Commons Attribution 4.0 International
+
+# LAMMPS TIG welding - THIN plates with heat EXACTLY at gap
+
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Create simulation box - THIN plates (only 2 layers thick)
+lattice         fcc 4.05
+region          box block 0 40 0 100 0 2 units lattice
+create_box      1 box
+
+# Create two THIN plates with gap in X direction
+# Gap between x=19.5 and x=20.5 (in Angstroms = 19.5*4.05 to 20.5*4.05)
+region          plate1 block 0 19 0 100 0 2 units lattice
+region          plate2 block 21 40 0 100 0 2 units lattice
+create_atoms    1 region plate1
+create_atoms    1 region plate2
+
+# Potential
+mass            1 26.982
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+
+neighbor        2.0 bin
+neigh_modify    delay 5 every 1
+
+velocity        all create 300.0 12345
+timestep        0.001
+
+thermo          500
+thermo_style    custom step temp pe ke etotal press vol
+
+# Equilibration
+fix             eq1 all nvt temp 300 300 0.1
+run             10000
+unfix           eq1
+
+# Welding parameters
+variable        weld_v equal 5.0           
+variable        radius equal 12.0
+
+# Heat source position moving along Y
+# Gap center in real units: x = 20*4.05 = 81 Angstroms
+# Mid-thickness: z = 1*4.05 = 4.05 Angstroms
+variable        gap_x equal 81.0
+variable        mid_z equal 4.05
+variable        ystart equal 20.0
+variable        yc equal v_ystart+v_weld_v*step*dt
+
+# Cylindrical region with axis along Z, centered at gap
+region          heat_zone cylinder z v_gap_x v_yc v_radius 0 10 units box
+
+# NPT ensemble
+fix             1 all npt temp 300 300 0.1 iso 0.0 0.0 1.0
+
+# Apply heat
+fix             2 all heat 1 300.0 region heat_zone
+
+# Dumps
+dump            1 all custom 1000 weld.dump id type x y z
+dump            2 all custom 1000 temp.dump id type x y z vx vy vz
+
+# Run welding
+run             40000
+
+# Cooling
+unfix           2
+run             20000
+
+# Final equilibration
+fix             3 all nvt temp 300 300 0.1
+run             20000
+
+write_data      welded.data
+
+print           "Welding completed"
