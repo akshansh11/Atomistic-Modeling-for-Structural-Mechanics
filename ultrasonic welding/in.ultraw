@@ -1,0 +1,84 @@
+# CREATED BY Akshansh Mishra on 28/11/2025
+# Modified for Ultrasonic Welding
+# This work is licensed under Creative Commons Attribution 4.0 International
+# LAMMPS Ultrasonic Welding - THIN plates with oscillating friction
+
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Create simulation box - THIN plates (only 2 layers thick)
+lattice         fcc 4.05
+region          box block 0 40 0 100 0 4 units lattice
+create_box      1 box
+
+# Create two THIN plates stacked in Z direction
+region          plate1 block 0 40 0 100 0 1 units lattice
+region          plate2 block 0 40 0 100 2 3 units lattice
+create_atoms    1 region plate1
+create_atoms    1 region plate2
+
+# Potential
+mass            1 26.982
+pair_style      eam/alloy
+pair_coeff      * * Al99.eam.alloy Al
+neighbor        2.0 bin
+neigh_modify    delay 5 every 1
+
+velocity        all create 300.0 12345
+timestep        0.001
+
+thermo          500
+thermo_style    custom step temp pe ke etotal press vol
+
+# Equilibration
+fix             eq1 all nvt temp 300 300 0.1
+run             10000
+unfix           eq1
+
+# Define groups
+region          bottom_plate block 0 40 0 100 0 1 units lattice
+region          top_plate block 0 40 0 100 2 3 units lattice
+region          weld_interface block 0 40 0 100 1 2.5 units lattice
+
+group           bottom region bottom_plate
+group           top region top_plate
+group           interface region weld_interface
+
+# Ultrasonic welding - oscillating motion of top plate
+fix             vibrate top move wiggle 0.5 0.0 0.0 0.126
+
+# Apply downward pressure on top plate
+fix             compress top aveforce 0.0 0.0 -0.05
+
+# Heat generation at interface
+fix             friction_heat interface heat 1 5.0
+
+# Thermostat for all atoms
+fix             nvt_all all nvt temp 300 400 0.1
+
+# Dumps
+dump            1 all custom 1000 ultrasonic_weld.dump id type x y z
+dump            2 all custom 1000 ultrasonic_temp.dump id type x y z vx vy vz
+
+# Run ultrasonic welding
+run             30000
+
+# Stop vibration and heating
+unfix           vibrate
+unfix           compress
+unfix           friction_heat
+
+# Cooling phase
+unfix           nvt_all
+fix             cool all nvt temp 400 300 0.1
+run             20000
+
+# Final equilibration
+unfix           cool
+fix             final all nvt temp 300 300 0.1
+run             20000
+
+write_data      ultrasonic_welded.data
+print           "Ultrasonic welding completed"
