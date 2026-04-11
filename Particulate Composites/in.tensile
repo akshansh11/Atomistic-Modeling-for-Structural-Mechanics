@@ -1,0 +1,159 @@
+# ============================================================
+# LAMMPS Tensile Test - Cu/Al Composite v6
+# ============================================================
+
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+variable        Lx equal 80.0
+variable        Ly equal 80.0
+variable        Lz equal 200.0
+
+region          simbox block 0 ${Lx} 0 ${Ly} 0 ${Lz} units box
+create_box      2 simbox
+
+lattice         fcc 4.046 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+create_atoms    2 box
+
+variable        rCu equal 15.0
+
+region  s01 sphere 20 20 18  ${rCu} units box
+region  s02 sphere 60 20 18  ${rCu} units box
+region  s03 sphere 20 60 18  ${rCu} units box
+region  s04 sphere 60 60 18  ${rCu} units box
+region  s05 sphere 40 40 38  ${rCu} units box
+region  s06 sphere 40 10 38  ${rCu} units box
+region  s07 sphere 10 40 38  ${rCu} units box
+region  s08 sphere 70 70 38  ${rCu} units box
+region  s09 sphere 20 20 58  ${rCu} units box
+region  s10 sphere 60 20 58  ${rCu} units box
+region  s11 sphere 20 60 58  ${rCu} units box
+region  s12 sphere 60 60 58  ${rCu} units box
+region  s13 sphere 40 40 78  ${rCu} units box
+region  s14 sphere 40 10 78  ${rCu} units box
+region  s15 sphere 10 40 78  ${rCu} units box
+region  s16 sphere 70 70 78  ${rCu} units box
+region  s17 sphere 20 20 98  ${rCu} units box
+region  s18 sphere 60 20 98  ${rCu} units box
+region  s19 sphere 20 60 98  ${rCu} units box
+region  s20 sphere 60 60 98  ${rCu} units box
+region  s21 sphere 40 40 118 ${rCu} units box
+region  s22 sphere 40 10 118 ${rCu} units box
+region  s23 sphere 10 40 118 ${rCu} units box
+region  s24 sphere 70 70 118 ${rCu} units box
+region  s25 sphere 20 20 138 ${rCu} units box
+region  s26 sphere 60 20 138 ${rCu} units box
+region  s27 sphere 20 60 138 ${rCu} units box
+region  s28 sphere 60 60 138 ${rCu} units box
+region  s29 sphere 40 40 155 ${rCu} units box
+region  s30 sphere 40 10 155 ${rCu} units box
+region  s31 sphere 10 40 155 ${rCu} units box
+region  s32 sphere 70 70 155 ${rCu} units box
+region  s33 sphere 20 20 170 ${rCu} units box
+region  s34 sphere 60 20 170 ${rCu} units box
+region  s35 sphere 20 60 170 ${rCu} units box
+region  s36 sphere 60 60 170 ${rCu} units box
+region  s37 sphere 40 40 187 ${rCu} units box
+region  s38 sphere 40 10 187 ${rCu} units box
+region  s39 sphere 10 40 187 ${rCu} units box
+region  s40 sphere 70 70 187 ${rCu} units box
+
+region  cu_all union 40 s01 s02 s03 s04 s05 s06 s07 s08 s09 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 s32 s33 s34 s35 s36 s37 s38 s39 s40
+
+set             region cu_all type 1
+
+mass            1 63.546
+mass            2 26.982
+
+group           cu_grp type 1
+group           al_grp type 2
+
+pair_style      eam/alloy
+pair_coeff      * * CuAlW.txt Cu Al
+
+neighbor        2.5 bin
+neigh_modify    delay 10 every 1 check yes
+
+velocity        all create 300.0 54321 mom yes rot yes dist gaussian
+
+print "=== Step 1: Minimization ==="
+thermo          500
+thermo_style    custom step pe fmax press
+minimize        1.0e-6 1.0e-8 100000 1000000
+reset_timestep  0
+timestep        0.001
+
+print "=== Step 2: NPT Equilibration ==="
+fix             eq_npt all npt temp 300.0 300.0 0.1 iso 0.0 0.0 1.0
+thermo          500
+thermo_style    custom step temp press lx ly lz vol etotal
+dump            d_eq all atom 5000 equilibration.lammpstrj
+dump_modify     d_eq sort id
+run             30000
+unfix           eq_npt
+undump          d_eq
+
+variable        lz0 equal lz
+print           "Equilibrated Lz = ${lz0} Angstrom"
+reset_timestep  0
+
+variable        grip   equal 5.0
+variable        bot_hi equal ${grip}
+variable        top_lo equal $(lz-5.0)
+
+region          bot_grip block INF INF INF INF 0.0       ${bot_hi} units box
+region          top_grip block INF INF INF INF ${top_lo} INF       units box
+
+group           grp_bot region bot_grip
+group           grp_top region top_grip
+group           grp_mob subtract all grp_bot grp_top
+
+print "=== Step 3: Tensile Test ==="
+
+variable        SR    equal 1.0e8
+variable        vpull equal ${SR}*1.0e-12*${lz0}
+
+fix             fbot_f grp_bot setforce 0.0 0.0 0.0
+fix             fbot_v grp_bot momentum 1 linear 1 1 1
+fix             ftop   grp_top move linear 0.0 0.0 ${vpull}
+fix             fnvt   grp_mob nvt temp 300.0 300.0 0.1
+fix             flat   all press/berendsen x 0.0 1.0 y 0.0 1.0
+
+compute         mytemp  all temp
+compute         mypress all pressure mytemp
+
+variable        strain   equal (lz-v_lz0)/v_lz0
+variable        sxx      equal c_mypress[1]
+variable        syy      equal c_mypress[2]
+variable        szz      equal c_mypress[3]
+variable        sxy      equal c_mypress[4]
+variable        sxz      equal c_mypress[5]
+variable        syz      equal c_mypress[6]
+variable        stress_z equal -v_szz/10000.0
+variable        vM equal sqrt(0.5*((v_sxx-v_syy)^2+(v_syy-v_szz)^2+(v_szz-v_sxx)^2+6*(v_sxy^2+v_sxz^2+v_syz^2)))/10000.0
+
+compute         cs_all all stress/atom mytemp
+compute         pe_all all pe/atom
+
+variable        cu_szz equal "reduce(ave,c_cs_all[3],cu_grp)"
+variable        al_szz equal "reduce(ave,c_cs_all[3],al_grp)"
+
+thermo          500
+thermo_style    custom step temp lz v_strain v_stress_z v_vM
+
+fix  out_ss all print 500 "${strain} ${stress_z} ${vM} $(temp) $(lz)" file stress_strain.dat title "# strain  stress_z(GPa)  vonMises(GPa)  temp(K)  lz(A)" screen no
+
+fix  out_elem all print 500 "${strain} ${cu_szz} ${al_szz}" file cu_vs_al_stress.dat title "# strain  cu_szz_avg  al_szz_avg" screen no
+
+dump  d_tens all custom 2000 tensile_composite.lammpstrj id type x y z c_cs_all[1] c_cs_all[2] c_cs_all[3] c_pe_all
+dump_modify d_tens sort id
+
+variable        nsteps equal round(0.10/(${SR}*1.0e-12*0.001))
+print           "Running ${nsteps} steps for 10% strain"
+run             ${nsteps}
+
+print "=== Complete ==="
+write_data    final_composite.data
+write_restart final_composite.restart
