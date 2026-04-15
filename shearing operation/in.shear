@@ -1,0 +1,120 @@
+# ============================================================
+#  Shearing: Al sheet  |  W punch (right)  |  W L-die (left)
+#  Potential : CuAlW.txt  (EAM/alloy)
+#  Type map  : 1=Cu (not placed)  2=Al  3=W
+# ============================================================
+
+units           metal
+dimension       3
+boundary        s s p
+atom_style      atomic
+
+variable  lx        equal  300.0
+variable  lz        equal  60.0
+variable  t         equal  40.0
+variable  sheet_y0  equal  0.0
+variable  sheet_y1  equal  ${t}
+variable  die_right equal  150.0
+variable  die_y0    equal  -120.0
+variable  die_y1    equal  -1.0
+variable  c         equal  6.0
+variable  pun_xlo   equal  ${die_right}+${c}
+variable  pun_xhi   equal  ${lx}-3.0
+variable  pun_y0    equal  ${sheet_y1}+1.0
+variable  pun_y1    equal  ${sheet_y1}+100.0
+
+# punch stops when its bottom face reaches 5 Å below die top (die_y1=-1)
+variable  punch_stop equal  ${die_y1}-5.0     # = -6.0
+
+# -------- Box --------
+lattice     fcc 4.05 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+region      simbox block 0 ${lx} -122 145 0 ${lz} units box
+create_box  3 simbox
+
+# Al sheet
+region      al_reg  block 0 ${lx} ${sheet_y0} ${sheet_y1} 0 ${lz} units box
+create_atoms 2 region al_reg
+
+# W die
+lattice     bcc 3.165 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+region      die_reg block 0 ${die_right} ${die_y0} ${die_y1} 0 ${lz} units box
+create_atoms 3 region die_reg
+
+# W punch
+region      pun_reg block ${pun_xlo} ${pun_xhi} ${pun_y0} ${pun_y1} 0 ${lz} units box
+create_atoms 3 region pun_reg
+
+# -------- Masses --------
+mass  1  63.546
+mass  2  26.982
+mass  3  183.84
+
+# -------- Potential --------
+pair_style  eam/alloy
+pair_coeff  * * CuAlW.txt Cu Al W
+
+# -------- Remove overlaps --------
+delete_atoms overlap 2.3 all all
+
+# -------- Groups --------
+group  al_sheet  type 2
+group  w_die     region die_reg
+group  w_punch   region pun_reg
+
+region  al_support_reg block 0 ${die_right} ${sheet_y0} 5.0 INF INF units box
+group   al_support     region al_support_reg
+group   al_fixed       intersect al_sheet al_support
+group   al_mobile      subtract  al_sheet al_fixed
+
+# -------- Rigid bodies --------
+fix  fix_die   w_die   rigid/nve single
+fix  fix_punch w_punch rigid/nve single
+
+# -------- Velocities --------
+velocity  al_mobile create 300.0 77777 dist gaussian
+velocity  w_die     set 0 0 0
+velocity  w_punch   set 0 0 0
+velocity  al_fixed  set 0 0 0
+
+# -------- Constraints --------
+fix  freeze_die   w_die    setforce 0 0 0
+fix  freeze_alfix al_fixed setforce 0 0 0
+fix  nvt_al       al_mobile nvt temp 300 300 0.1
+
+# -------- Equilibration 5 ps --------
+fix   hold_punch w_punch setforce 0 0 0
+timestep      0.0005
+neigh_modify  delay 0 every 1 check yes
+thermo        500
+thermo_style  custom step temp pe ke
+run           10000
+
+# -------- Shearing run --------
+unfix  hold_punch
+timestep  0.001
+
+fix  drive_punch w_punch move linear 0.0 -0.5 0.0
+
+# FIX: track punch bottom Y and halt when it reaches punch_stop
+# bound(w_punch,ymin) = current lowest Y of any punch atom
+variable  punch_bottom equal bound(w_punch,ymin)
+
+# Stop punch once bottom face clears the sheet (reaches die_y1 - 5 Å)
+fix  halt_punch all halt 100 v_punch_bottom < ${punch_stop} error continue
+
+# Von Mises stress per Al atom
+compute  vms al_mobile stress/atom NULL
+variable vm  atom sqrt(((c_vms[1]-c_vms[2])^2+(c_vms[2]-c_vms[3])^2+(c_vms[3]-c_vms[1])^2+6*(c_vms[4]^2+c_vms[5]^2+c_vms[6]^2))/2)
+
+# Punch force on Al
+compute  punch_Al w_punch group/group al_mobile
+variable Fy_punch equal c_punch_Al[2]
+
+thermo_style  custom step temp pe ke v_Fy_punch v_punch_bottom
+dump   d1 all custom 500 dump.shear.*.cfg id type xs ys zs v_vm
+dump_modify d1 sort id
+
+run  100000
+
+write_data  final_shear.data
+print "Done. Shearing complete at punch_bottom = ${punch_stop}."
